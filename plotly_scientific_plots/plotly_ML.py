@@ -422,3 +422,136 @@ def plotConfusionMatrix(y_true,         # list of true labels
         fig = go.Figure(data=data, layout=fig['layout'])
 
     return plotOut(fig, plot)
+
+
+def plot_pivot_heatmap(primary_df, hover_dfs=None, title="Pivot Table Heatmap",
+                       colorscale="Greys", na_text="N/A", value_format=".3f",
+                       fontsize=12, zmin=None, zmax=None, plot=True):
+    """
+    Create an interactive heatmap from a pivot table with additional hover information.
+
+    Parameters:
+    -----------
+    primary_df : pandas.DataFrame
+        Primary pivot table to display as heatmap values
+    hover_dfs : dict, optional
+        Dictionary of {name: dataframe} for additional tables to show on hover
+        Each dataframe must have same shape, index and columns as primary_df
+    title : str, optional
+        Title for the plot
+    colorscale : str, optional
+        Plotly colorscale name (default: "Greys")
+    na_text : str, optional
+        Text to display for NaN values
+    value_format : str, optional
+        Format string for cell values (e.g., ".3f" for 3 decimal places)
+    fontsize : int, optional
+        Font size for annotations (default: 12)
+    zmin : float, optional
+        Minimum value for color scale. If None, uses data minimum.
+    zmax : float, optional
+        Maximum value for color scale. If None, uses data maximum.
+
+    Returns:
+    --------
+    plotly.graph_objects.Figure
+    """
+    # Initialize hover_dfs if None
+    if hover_dfs is None:
+        hover_dfs = {}
+
+    # Create hover text
+    hover_texts = []
+    for i, idx in enumerate(primary_df.index):
+        row_texts = []
+        for j, col in enumerate(primary_df.columns):
+            primary_val = primary_df.iloc[i, j]
+
+            # Start with index and column identifiers
+            idx_name = primary_df.index.name or "Row"
+            col_name = primary_df.columns.name or "Column"
+
+            text = f"<b>{idx_name}:</b> {idx}<br><b>{col_name}:</b> {col}<br>"
+
+            # Add primary value
+            if not np.isnan(primary_val):
+                format_str = f"{{:{value_format}}}" if value_format else "{}"
+                text += f"<b>Value:</b> {format_str.format(primary_val)}<br>"
+            else:
+                text += f"<b>Value:</b> {na_text}<br>"
+
+            # Add additional hover information
+            for name, df in hover_dfs.items():
+                val = df.iloc[i, j]
+                if not np.isnan(val):
+                    format_str = f"{{:{value_format}}}" if value_format else "{}"
+                    text += f"<b>{name}:</b> {format_str.format(val)}<br>"
+                else:
+                    text += f"<b>{name}:</b> {na_text}<br>"
+
+            # Remove the final <br>
+            text = text[:-4]
+            row_texts.append(text)
+        hover_texts.append(row_texts)
+
+    # Create heatmap
+    fig = go.Figure(data=go.Heatmap(
+        z=primary_df.values,
+        x=primary_df.columns,
+        y=primary_df.index,
+        colorscale=colorscale,
+        hoverinfo="text",
+        text=hover_texts,
+        colorbar=dict(title=primary_df.name if hasattr(primary_df, 'name') else "Value"),
+        zmin=zmin,
+        zmax=zmax
+    ))
+
+    # Set min/max values for text color determination
+    min_val = zmin if zmin is not None else np.nanmin(primary_df.values)
+    max_val = zmax if zmax is not None else np.nanmax(primary_df.values)
+
+    # Add annotations for the values
+    annotations = []
+    for i, idx in enumerate(primary_df.index):
+        for j, col in enumerate(primary_df.columns):
+            value = primary_df.iloc[i, j]
+            if not np.isnan(value):
+                format_str = f"{{:{value_format}}}" if value_format else "{}"
+                text = format_str.format(value)
+
+                # Improved contrast calculation that respects zmin/zmax
+                if min_val == max_val:
+                    # Avoid division by zero if all values are the same
+                    norm_val = 0.5
+                else:
+                    norm_val = (value - min_val) / (max_val - min_val)
+                    # Clip to 0-1 range for values outside zmin/zmax
+                    norm_val = max(0, min(norm_val, 1))
+
+                # Make text white if the background is dark (> 0.6 on greyscale)
+                font_color = "white" if norm_val > 0.6 else "black"
+            else:
+                text = na_text
+                font_color = "black"
+
+            annotations.append(dict(
+                x=col,
+                y=idx,
+                text=text,
+                showarrow=False,
+                font=dict(color=font_color, size=fontsize)
+            ))
+
+    # Update layout
+    fig.update_layout(
+        title=title,
+        xaxis_title=primary_df.columns.name or "Column",
+        yaxis_title=primary_df.index.name or "Row",
+        xaxis=dict(tickangle=-45, tickfont=dict(size=fontsize)),
+        yaxis=dict(autorange="reversed", tickfont=dict(size=fontsize)),
+        annotations=annotations,
+        title_font=dict(size=fontsize + 4)
+    )
+
+    return plotOut(fig, plot=plot)
