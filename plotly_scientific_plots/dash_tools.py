@@ -270,7 +270,7 @@ def startDashboardSerial(figs,
         download_button = create_html_download_button(
             original_figs,
             file_name=download_filename,
-            button_name="Download Dashboard as HTML V2"
+            button_name="Download Dashboard as HTML"
         )
 
         # Add download button to layout
