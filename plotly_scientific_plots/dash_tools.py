@@ -3,8 +3,8 @@ import numpy as np
 import io
 from base64 import b64encode
 import dash
-from dash import dcc
-from dash import html
+from dash import dcc, html, callback, Output, Input, State
+from dash.exceptions import PreventUpdate
 import plotly.graph_objs as go
 import json
 import pickle
@@ -13,7 +13,7 @@ from plotly_scientific_plots.plotly_misc import jsonify
 
 def create_html_download_button(figs, file_name="plotly_graph", button_name="Download as HTML"):
     """
-    Creates a download button for Plotly figures
+    Creates an improved download button using JavaScript Blob URLs instead of data URLs
     """
     # Convert from dict to Plotly figs as needed
     plotly_figs = []
@@ -24,7 +24,7 @@ def create_html_download_button(figs, file_name="plotly_graph", button_name="Dow
             plotly_figs.append(fig)
     figs = plotly_figs
 
-    # Handle multiple figures
+    # Generate HTML content
     if isinstance(figs, list) and len(figs) > 1:
         figs = [fig for fig in figs if fig is not None]
         main_buffer = io.StringIO()
@@ -41,24 +41,19 @@ def create_html_download_button(figs, file_name="plotly_graph", button_name="Dow
             fig.write_html(_buffer, full_html=False)
             outputs.append(_buffer)
 
-        main_buffer.write(''.join([i.getvalue() for i in outputs]))
+        html_content = ''.join([i.getvalue() for i in outputs])
     else:
-        # Handle single figure
         main_buffer = io.StringIO()
         if isinstance(figs, list):
             figs[0].write_html(main_buffer, include_plotlyjs='cdn')
         else:
             figs.write_html(main_buffer, include_plotlyjs='cdn')
+        html_content = main_buffer.getvalue()
 
-    # Convert to base64
-    html_bytes = main_buffer.getvalue().encode()
-    encoded = b64encode(html_bytes).decode()
-
-    # Create download button
-    download_html = html.A(
+    # Create a button with JavaScript download functionality
+    download_button = html.Button(
         button_name,
-        href="data:text/html;base64," + encoded,
-        download=file_name + ".html",
+        id="download-button",
         style={
             'background-color': '#4CAF50',
             'border': 'none',
@@ -73,8 +68,32 @@ def create_html_download_button(figs, file_name="plotly_graph", button_name="Dow
             'border-radius': '4px'
         }
     )
+    
+    # Hidden div to store the HTML content
+    hidden_div = html.Div(
+        id="html-content",
+        children=html_content,
+        style={"display": "none"}
+    )
+    
+    # JavaScript component for download functionality
+    download_script = dcc.Download(id="download-html")
+    
+    return html.Div([download_button, hidden_div, download_script])
 
-    return download_html
+
+# Add this callback to your Dash app
+@callback(
+    Output("download-html", "data"),
+    Input("download-button", "n_clicks"),
+    State("html-content", "children"),
+    prevent_initial_call=True
+)
+def download_html(n_clicks, html_content):
+    if n_clicks is None:
+        raise PreventUpdate
+    
+    return dict(content=html_content, filename="dashboard.html", type="text/html")
 
 ###Dash wrappers
 def dashSubplot(plots,
