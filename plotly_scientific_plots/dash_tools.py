@@ -3,8 +3,8 @@ import numpy as np
 import io
 from base64 import b64encode
 import dash
-from dash import dcc
-from dash import html
+from dash import dcc, html, callback, Output, Input, State
+from dash.exceptions import PreventUpdate
 import plotly.graph_objs as go
 import json
 import pickle
@@ -13,7 +13,7 @@ from plotly_scientific_plots.plotly_misc import jsonify
 
 def create_html_download_button(figs, file_name="plotly_graph", button_name="Download as HTML"):
     """
-    Creates a download button for Plotly figures
+    Creates an improved download button using dcc.Download component
     """
     # Convert from dict to Plotly figs as needed
     plotly_figs = []
@@ -24,41 +24,10 @@ def create_html_download_button(figs, file_name="plotly_graph", button_name="Dow
             plotly_figs.append(fig)
     figs = plotly_figs
 
-    # Handle multiple figures
-    if isinstance(figs, list) and len(figs) > 1:
-        figs = [fig for fig in figs if fig is not None]
-        main_buffer = io.StringIO()
-        outputs = []
-
-        # Write first figure with full HTML
-        _buffer = io.StringIO()
-        figs[0].write_html(_buffer, full_html=True, include_plotlyjs='cdn')
-        outputs.append(_buffer)
-
-        # Write remaining figures as divs
-        for fig in figs[1:]:
-            _buffer = io.StringIO()
-            fig.write_html(_buffer, full_html=False)
-            outputs.append(_buffer)
-
-        main_buffer.write(''.join([i.getvalue() for i in outputs]))
-    else:
-        # Handle single figure
-        main_buffer = io.StringIO()
-        if isinstance(figs, list):
-            figs[0].write_html(main_buffer, include_plotlyjs='cdn')
-        else:
-            figs.write_html(main_buffer, include_plotlyjs='cdn')
-
-    # Convert to base64
-    html_bytes = main_buffer.getvalue().encode()
-    encoded = b64encode(html_bytes).decode()
-
-    # Create download button
-    download_html = html.A(
+    # Create a button with download functionality
+    download_button = html.Button(
         button_name,
-        href="data:text/html;base64," + encoded,
-        download=file_name + ".html",
+        id="download-button",
         style={
             'background-color': '#4CAF50',
             'border': 'none',
@@ -73,8 +42,98 @@ def create_html_download_button(figs, file_name="plotly_graph", button_name="Dow
             'border-radius': '4px'
         }
     )
+    
+    # Store the figures data in a dcc.Store component (more reliable than hidden div)
+    fig_store = dcc.Store(id="fig-data-store", data=[fig.to_dict() if hasattr(fig, 'to_dict') else fig for fig in figs])
+    filename_store = dcc.Store(id="filename-store", data=file_name)
+    
+    # JavaScript component for download functionality
+    download_script = dcc.Download(id="download-html")
+    
+    return html.Div([download_button, fig_store, filename_store, download_script])
 
-    return download_html
+
+# Add this callback to your Dash app
+@callback(
+    Output("download-html", "data"),
+    Input("download-button", "n_clicks"),
+    [State("fig-data-store", "data"),
+     State("filename-store", "data")],
+    prevent_initial_call=True
+)
+def download_html(n_clicks, fig_data_list, filename):
+    if n_clicks is None:
+        raise PreventUpdate
+    
+    try:
+        # Reconstruct figures from stored data
+        figs = []
+        for fig_data in fig_data_list:
+            if isinstance(fig_data, dict):
+                figs.append(go.Figure(fig_data))
+            else:
+                figs.append(fig_data)
+        
+        # Generate HTML content
+        if len(figs) > 1:
+            # Multiple figures
+            html_parts = []
+            
+            # Write first figure with full HTML structure
+            buffer = io.StringIO()
+            figs[0].write_html(buffer, full_html=True, include_plotlyjs='cdn')
+            html_parts.append(buffer.getvalue())
+            
+            # For remaining figures, extract just the plot div and script
+            for i, fig in enumerate(figs[1:], 1):
+                buffer = io.StringIO()
+                fig.write_html(buffer, full_html=False, include_plotlyjs=False, div_id=f"plotly-div-{i}")
+                plot_html = buffer.getvalue()
+                
+                # Insert the additional plot into the main HTML before closing body tag
+                if i == 1:  # First additional plot
+                    # Find the closing body tag and insert before it
+                    main_html = html_parts[0]
+                    insert_pos = main_html.rfind('</body>')
+                    if insert_pos != -1:
+                        html_parts[0] = main_html[:insert_pos] + plot_html + main_html[insert_pos:]
+                    else:
+                        html_parts.append(plot_html)
+                else:
+                    # For subsequent plots, find the last closing body tag and insert before it
+                    main_html = html_parts[0]
+                    insert_pos = main_html.rfind('</body>')
+                    if insert_pos != -1:
+                        html_parts[0] = main_html[:insert_pos] + plot_html + main_html[insert_pos:]
+            
+            html_content = html_parts[0]
+        else:
+            # Single figure
+            buffer = io.StringIO()
+            figs[0].write_html(buffer, include_plotlyjs='cdn')
+            html_content = buffer.getvalue()
+        
+        # Check content size (basic validation)
+        if len(html_content) == 0:
+            raise Exception("Generated HTML content is empty")
+        
+        return dict(content=html_content, filename=f"{filename}.html")
+        
+    except Exception as e:
+        print(f"Download error: {str(e)}")
+        # Return a simple error page instead of failing
+        error_html = f"""
+        <!DOCTYPE html>
+        <html>
+        <head><title>Download Error</title></head>
+        <body>
+        <h1>Download Error</h1>
+        <p>An error occurred while generating the dashboard: {str(e)}</p>
+        <p>Please try again or contact support.</p>
+        </body>
+        </html>
+        """
+        return dict(content=error_html, filename=f"{filename}_error.html")
 
 ###Dash wrappers
 def dashSubplot(plots,
